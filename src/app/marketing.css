@@ -1,75 +1,78 @@
 @import "tailwindcss";
 
 /* --------------------------------------------------------------------------
-   EUGuard — Marketing Pages Global Styles
-   Brand: Deep Indigo + Emerald accent on dark slate
+   EUGuard — Marketing Pages Design System
+   Brand Family: PlugKit (indigo-gradient squircles, dark navy, Geist)
+   EUGuard Distinction: Directive Gold CTAs, deeper navy surfaces, EU shield logo
    -------------------------------------------------------------------------- */
 
 @theme {
-  /* Brand — Deep Indigo */
+  /* ── Primary Brand — Euro Indigo (PlugKit family, deeper/more institutional) ── */
   --color-brand: #4F46E5;
-  --color-brand-dark: #4338CA;
-  --color-brand-light: #6366F1;
+  --color-brand-dark: #3730A3;
+  --color-brand-light: #818CF8;
 
-  /* Accent — Emerald (success/positive states) */
-  --color-accent: #10B981;
-  --color-accent-dark: #059669;
-  --color-accent-light: #34D399;
+  /* ── CTA / Urgency — Directive Gold (EU flag star color, unique vs competitors) ── */
+  --color-gold: #F59E0B;
+  --color-gold-dark: #D97706;
+  --color-gold-light: #FCD34D;
 
-  /* Surfaces — Dark slate with depth */
-  --color-surface: #0F172A;
-  --color-surface-elevated: #1E293B;
-  --color-surface-hover: #334155;
+  /* ── Status Colors ── */
+  --color-success: #10B981;
+  --color-success-light: #34D399;
+  --color-danger: #F43F5E;
+  --color-danger-light: #FB7185;
+  --color-warning: #F59E0B;
 
-  /* Danger — Red for negative/problem states */
-  --color-danger: #EF4444;
-  --color-danger-light: #FCA5A5;
+  /* ── Surfaces — PlugKit-derived dark navy (exact match for family feel) ── */
+  --color-surface: #040A11;
+  --color-surface-elevated: #09121B;
+  --color-surface-hover: #121D2B;
+  --color-surface-card: #0E151D;
 
-  /* Text */
-  --color-text-primary: #F8FAFC;
-  --color-text-secondary: #94A3B8;
-  --color-text-muted: #64748B;
+  /* ── Text — PlugKit-derived off-whites ── */
+  --color-text-primary: #E3E8EE;
+  --color-text-secondary: #9BA6B1;
+  --color-text-muted: #516170;
 
-  /* Borders */
-  --color-border: #334155;
-  --color-border-subtle: #1E293B;
+  /* ── Borders — PlugKit-derived ── */
+  --color-border: #242F3A;
+  --color-border-subtle: #0E151D;
 }
 
-/* Scroll-triggered fade-in animation */
+/* ── Scroll-triggered animations ─────────────────────────────────────────── */
+
 @keyframes fade-in-up {
-  from {
-    opacity: 0;
-    transform: translateY(24px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes fade-in {
   from { opacity: 0; }
-  to { opacity: 1; }
+  to   { opacity: 1; }
 }
 
 @keyframes pulse-glow {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 0.7; }
+  0%, 100% { opacity: 0.35; }
+  50%       { opacity: 0.65; }
 }
 
-.animate-fade-in-up {
-  animation: fade-in-up 0.6s ease-out both;
+@keyframes tick-in {
+  from { transform: translateY(-8px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
 }
 
-.animate-fade-in {
-  animation: fade-in 0.5s ease-out both;
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
 }
 
-.animate-pulse-glow {
-  animation: pulse-glow 3s ease-in-out infinite;
-}
+.animate-fade-in-up  { animation: fade-in-up 0.6s ease-out both; }
+.animate-fade-in     { animation: fade-in    0.5s ease-out both; }
+.animate-pulse-glow  { animation: pulse-glow 3s   ease-in-out infinite; }
+.animate-tick-in     { animation: tick-in    0.25s ease-out both; }
 
-/* Staggered animation delays */
+/* Staggered delays */
 .delay-100 { animation-delay: 100ms; }
 .delay-200 { animation-delay: 200ms; }
 .delay-300 { animation-delay: 300ms; }
@@ -83,13 +86,13 @@
   transform: translateY(24px);
   transition: opacity 0.6s ease-out, transform 0.6s ease-out;
 }
-
 [data-animate].visible {
   opacity: 1;
   transform: translateY(0);
 }
 
-/* Gradient text — indigo brand */
+/* ── Gradient text utilities ─────────────────────────────────────────────── */
+
 .text-gradient-brand {
   background: linear-gradient(135deg, #4F46E5, #818CF8);
   -webkit-background-clip: text;
@@ -97,7 +100,13 @@
   background-clip: text;
 }
 
-/* Gradient text — emerald accent (positive numbers, savings) */
+.text-gradient-gold {
+  background: linear-gradient(135deg, #F59E0B, #FCD34D);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
 .text-gradient-green {
   background: linear-gradient(135deg, #10B981, #34D399);
   -webkit-background-clip: text;
@@ -105,21 +114,137 @@
   background-clip: text;
 }
 
-/* Gradient text — red (problems, costs) */
-.text-gradient-red {
-  background: linear-gradient(135deg, #EF4444, #FCA5A5);
+.text-gradient-danger {
+  background: linear-gradient(135deg, #F43F5E, #FB7185);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
-/* Smooth scrolling */
-html {
-  scroll-behavior: smooth;
+/* ── PlugKit logo gradient (for squircle backgrounds) ─────────────────────── */
+
+.bg-gradient-logo {
+  background: linear-gradient(135deg, #312E81 0%, #4F46E5 45%, #818CF8 100%);
 }
 
-/* Selection color — indigo brand */
+/* ── Gold CTA button shimmer ─────────────────────────────────────────────── */
+
+.btn-gold {
+  position: relative;
+  overflow: hidden;
+}
+.btn-gold::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.12), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 2.5s ease-in-out infinite;
+}
+
+/* ── Urgency pill (pulsing red dot) ──────────────────────────────────────── */
+
+.urgency-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #F43F5E;
+  animation: pulse-glow 1.8s ease-in-out infinite;
+}
+
+/* ── Countdown number flip ─────────────────────────────────────────────── */
+
+.countdown-digit {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+/* ── EU Stars Ring ───────────────────────────────────────────────────────── */
+
+@keyframes eu-orbit {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-14px); }
+}
+
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-8px); }
+}
+
+@keyframes node-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.5); }
+  50%       { box-shadow: 0 0 0 10px rgba(245, 158, 11, 0); }
+}
+
+@keyframes scan-line {
+  0%   { top: -2px; opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.3; }
+  50%       { opacity: 0.7; }
+}
+
+.animate-eu-orbit {
+  animation: eu-orbit 80s linear infinite;
+}
+
+.animate-float     { animation: float      4s  ease-in-out infinite; }
+.animate-float-slow { animation: float-slow 6s ease-in-out infinite; }
+.animate-node-pulse { animation: node-pulse 2s ease-in-out infinite; }
+.animate-scan-line  { animation: scan-line  2s linear infinite; }
+.animate-glow-pulse { animation: glow-pulse 3s ease-in-out infinite; }
+
+/* ── Scan effect on images ───────────────────────────────────────────────── */
+
+.scan-wrapper {
+  position: relative;
+  overflow: hidden;
+}
+.scan-wrapper::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(79,70,229,0.8), transparent);
+  animation: scan-line 2.5s linear infinite;
+}
+
+/* ── Feature image glow ──────────────────────────────────────────────────── */
+
+.feature-glow {
+  filter: drop-shadow(0 0 48px rgba(79, 70, 229, 0.25));
+}
+
+/* ── Timeline nodes ──────────────────────────────────────────────────────── */
+
+.timeline-node-urgent {
+  animation: node-pulse 2s ease-in-out infinite;
+}
+
+/* ── Step cards ─────────────────────────────────────────────────────────── */
+
+.step-card {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+.step-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 60px rgba(79, 70, 229, 0.15);
+}
+
+/* ── Global ─────────────────────────────────────────────────────────────── */
+
+html { scroll-behavior: smooth; }
+
 ::selection {
-  background-color: rgba(79, 70, 229, 0.3);
-  color: #F8FAFC;
+  background-color: rgba(79, 70, 229, 0.35);
+  color: #E3E8EE;
 }
