@@ -37,7 +37,7 @@ const SHOWCASES = [
   {
     tag: "AI Scanner",
     headline: "Find violations before regulators do",
-    body: "Our AI scans every product listing in real time — catching greenwashing phrases, missing safety statements, and accessibility gaps the moment they appear.",
+    body: "Our AI scans your entire store in real time — products, collections, CMS pages, blog posts, and banners — catching greenwashing phrases, missing safety statements, and accessibility gaps wherever they appear.",
     bullets: ["Scans 1,000+ products in under 60 seconds", "Detects 200+ violation patterns", "Explains every finding in plain English"],
     image: "/features/ai-scanner-nb2.png",
     imageAlt: "AI compliance scanner interface",
@@ -293,7 +293,7 @@ export default function HomePage() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 28 }}>
             {[
               { n: "01", title: "Install from Shopify", body: "One-click install from the Shopify App Store. EUGuard connects to your store instantly — no code, no configuration.", icon: "🛍" },
-              { n: "02", title: "AI scans your catalog", body: "EUGuard reads every product listing and checks it against all 7 EU directives. First scan completes in under 60 seconds.", icon: "🔍" },
+              { n: "02", title: "AI scans your entire store", body: "EUGuard reads products, collections, CMS pages, blog posts, and homepage content — anywhere a greenwashing claim or compliance gap can hide.", icon: "🔍" },
               { n: "03", title: "Fix violations, stay clean", body: "Review AI-generated fixes, apply them with one click, and get alerts whenever new violations appear in your store.", icon: "✅" },
             ].map((step, i) => (
               <div key={step.n} data-animate className="step-card" style={{ backgroundColor: C.elevated, border: `1px solid ${C.border}`, borderRadius: 16, padding: "32px 24px" }}>
