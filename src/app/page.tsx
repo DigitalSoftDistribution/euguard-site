@@ -62,6 +62,15 @@ const SHOWCASES = [
     flip: false,
   },
   {
+    tag: "Document Scanner",
+    headline: "Scan your T&Cs, privacy policy, and marketing emails",
+    body: "Your product listings aren't the only thing regulators check. EUGuard's Document Scanner analyzes your Terms & Conditions, Privacy Policy, sustainability pages, shipping policies, product labels, and email templates — each against the specific EU regulations that apply to that document type.",
+    bullets: ["6 specialized scanners with per-document compliance checklists", "GDPR privacy policy audit (Articles 13/14)", "Terms & Conditions withdrawal rights check (Directive 2011/83/EU)"],
+    image: "/features/ai-scanner-nb2.png",
+    imageAlt: "Document compliance scanner with checklist",
+    flip: false,
+  },
+  {
     tag: "24 EU Languages",
     headline: "Compliance in every language you sell in",
     body: "EU regulations apply in the buyer's language. EUGuard detects violations across all 24 official EU languages — from German and French to Bulgarian and Maltese — and generates fix suggestions in the same language as your listing.",
@@ -90,7 +99,7 @@ const PLANS = [
     desc: "For growing EU stores",
     cta: "Start Free Trial",
     highlight: false,
-    features: ["Up to 500 products", "All 7 regulations", "Daily scans", "AI fix suggestions", "27-country risk map", "Priority email support"],
+    features: ["Up to 500 products", "All 7 regulations", "Daily scans", "AI fix suggestions", "Document Scanner (6 types)", "27-country risk map", "Priority email support"],
   },
   {
     name: "Professional",
@@ -99,7 +108,7 @@ const PLANS = [
     desc: "Full compliance coverage",
     cta: "Start Free Trial",
     highlight: true,
-    features: ["Up to 5,000 products", "All 7 regulations", "Real-time monitoring", "1-click auto-fix", "All 24 EU languages", "Evidence archive", "Slack & email alerts", "Live chat support"],
+    features: ["Up to 5,000 products", "All 7 regulations", "Real-time monitoring", "1-click auto-fix", "Document Scanner (all types)", "All 24 EU languages", "Evidence archive", "Slack & email alerts", "Live chat support"],
   },
   {
     name: "Enterprise",
@@ -293,7 +302,7 @@ export default function HomePage() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 28 }}>
             {[
               { n: "01", title: "Install from Shopify", body: "One-click install from the Shopify App Store. EUGuard connects to your store instantly — no code, no configuration.", icon: "🛍" },
-              { n: "02", title: "AI scans your entire store", body: "EUGuard reads products, collections, CMS pages, blog posts, and homepage content — anywhere a greenwashing claim or compliance gap can hide.", icon: "🔍" },
+              { n: "02", title: "AI scans your entire store", body: "EUGuard reads products, collections, CMS pages, blog posts, and homepage content. Plus, scan your T\u0026Cs, privacy policy, and marketing emails with 6 specialized document scanners.", icon: "🔍" },
               { n: "03", title: "Fix violations, stay clean", body: "Review AI-generated fixes, apply them with one click, and get alerts whenever new violations appear in your store.", icon: "✅" },
             ].map((step, i) => (
               <div key={step.n} data-animate className="step-card" style={{ backgroundColor: C.elevated, border: `1px solid ${C.border}`, borderRadius: 16, padding: "32px 24px" }}>
