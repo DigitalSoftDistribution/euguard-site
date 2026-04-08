@@ -62,10 +62,10 @@ const SHOWCASES = [
     flip: false,
   },
   {
-    tag: "8 Languages",
+    tag: "24 EU Languages",
     headline: "Compliance in every language you sell in",
-    body: "EU regulations apply in the buyer's language. EUGuard checks your listings in English, German, French, Spanish, Italian, Dutch, Polish, and Swedish.",
-    bullets: ["Native-language violation detection", "Translated fix suggestions", "Locale-aware legal phrase library"],
+    body: "EU regulations apply in the buyer's language. EUGuard detects violations across all 24 official EU languages — from German and French to Bulgarian and Maltese — and generates fix suggestions in the same language as your listing.",
+    bullets: ["All 24 official EU languages", "Violation detection in the original language", "Fix suggestions written in the listing's language"],
     image: "/features/multi-language-nb2.png",
     imageAlt: "Multi-language compliance checking",
     flip: true,
@@ -99,7 +99,7 @@ const PLANS = [
     desc: "Full compliance coverage",
     cta: "Start Free Trial",
     highlight: true,
-    features: ["Up to 5,000 products", "All 7 regulations", "Real-time monitoring", "1-click auto-fix", "8-language scanning", "Evidence archive", "Slack & email alerts", "Live chat support"],
+    features: ["Up to 5,000 products", "All 7 regulations", "Real-time monitoring", "1-click auto-fix", "All 24 EU languages", "Evidence archive", "Slack & email alerts", "Live chat support"],
   },
   {
     name: "Enterprise",
