@@ -321,7 +321,7 @@ export default function HomePage() {
               {!s.flip && (
                 <div style={{ position: "relative" }}>
                   <div style={{ position: "absolute", inset: -24, borderRadius: 28, background: `radial-gradient(circle, ${i % 2 === 0 ? C.brand : C.gold}12 0%, transparent 65%)`, filter: "blur(48px)", zIndex: 0 }} />
-                  <div className="scan-wrapper" style={{ position: "relative", zIndex: 1, borderRadius: 16, overflow: "hidden", border: `1px solid ${C.border}`, boxShadow: `0 20px 60px rgba(0,0,0,0.4)` }}>
+                  <div className={i === 0 ? "scan-wrapper" : ""} style={{ position: "relative", zIndex: 1, borderRadius: 16, overflow: "hidden", border: `1px solid ${C.border}`, boxShadow: `0 20px 60px rgba(0,0,0,0.4)` }}>
                     <Image src={s.image} alt={s.imageAlt} width={560} height={400} style={{ width: "100%", height: "auto", display: "block" }} />
                   </div>
                 </div>
@@ -351,7 +351,7 @@ export default function HomePage() {
               {s.flip && (
                 <div style={{ position: "relative" }}>
                   <div style={{ position: "absolute", inset: -24, borderRadius: 28, background: `radial-gradient(circle, ${i % 2 === 0 ? C.brand : C.gold}12 0%, transparent 65%)`, filter: "blur(48px)", zIndex: 0 }} />
-                  <div className="scan-wrapper" style={{ position: "relative", zIndex: 1, borderRadius: 16, overflow: "hidden", border: `1px solid ${C.border}`, boxShadow: `0 20px 60px rgba(0,0,0,0.4)` }}>
+                  <div style={{ position: "relative", zIndex: 1, borderRadius: 16, overflow: "hidden", border: `1px solid ${C.border}`, boxShadow: `0 20px 60px rgba(0,0,0,0.4)` }}>
                     <Image src={s.image} alt={s.imageAlt} width={560} height={400} style={{ width: "100%", height: "auto", display: "block" }} />
                   </div>
                 </div>
