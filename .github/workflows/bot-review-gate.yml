@@ -1,235 +1,121 @@
+# bot-review-gate.yml — required-status check that fails when bots have
+# unresolved Major/High/Medium findings AND/OR when typecheck/build fails.
+#
+# Drop into .github/workflows/bot-review-gate.yml in each repo. The job names
+# (`bot-review-check`, `typecheck`) become required statuses on the branch
+# protection rule.
+#
+# Generated 2026-05-03 — see /home/devops/healthcheck/patches/install-bot-review-gate.sh
+# for an installer that drops this into the canonical workflow path per repo.
+
 name: bot-review-gate
 
-# Server-side gate that fails the merge gate when CodeRabbit or Cursor
-# Bugbot have unresolved Major/High/Medium severity comments on a PR.
-# Combined with branch protection ("require bot-review-check to pass"),
-# this catches every merge attempt regardless of where it originates:
-# Claude Code on Mac, cursor-agent on Beast, codex / claude-cli, the
-# GitHub web UI, manual `gh pr merge`, anything.
-#
-# Local hooks (.claude/hooks/shared/pre-merge-bot-check.sh) remain as
-# fast-feedback during development but are no longer the source of truth.
-
 on:
-  # Triggers trimmed 2026-04-30: keep PR sync + submitted reviews.
-  # Dropped pull_request_review_comment + issue_comment because they fire
-  # on every comment edit (4-8 redundant runs per PR). Submitted reviews
-  # already cover the bot-finding state changes we actually care about.
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
   pull_request_review:
-    types: [submitted]
+    types: [submitted, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+
+# Cancel previous runs on the same PR so we always evaluate the latest state
+concurrency:
+  group: bot-review-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
 
 jobs:
-  check:
-    # For issue_comment events, only run on PR comments (not plain issues)
-    if: ${{ github.event_name != 'issue_comment' || github.event.issue.pull_request != null }}
+  # === L3: typecheck gate (build-green) ===
+  typecheck:
+    name: typecheck
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: read
-      checks: write
-
+    if: github.event.pull_request.draft == false
     steps:
-      - name: Classify bot review comments
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: |
+          if grep -q '"typecheck"' package.json; then
+            pnpm -w typecheck 2>/dev/null || pnpm typecheck
+          else
+            npx tsc --noEmit
+          fi
+
+  # === Bot-review thread evaluation ===
+  bot-review-check:
+    name: bot-review-check
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Check bot review threads
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const prNumber =
-              context.payload.pull_request?.number ??
-              context.payload.issue?.number;
-
-            if (!prNumber) {
-              core.info("No PR number on this event, skipping.");
-              return;
-            }
-
-            const { data: pr } = await github.rest.pulls.get({
+            const pr = context.payload.pull_request || (await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: prNumber,
-            });
-            const headSha = pr.head.sha;
+              pull_number: context.issue.number,
+            })).data;
 
-            // Fetch review THREADS via GraphQL so we can filter out
-            // resolved / outdated comments. The REST listReviewComments
-            // endpoint doesn't expose thread resolution status, which led
-            // an earlier version of this workflow to count already-fixed
-            // findings as blocking (Cursor flagged this on PR #9).
-            const threadQuery = `
-              query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
-                repository(owner: $owner, name: $repo) {
-                  pullRequest(number: $pr) {
-                    reviewThreads(first: 100, after: $cursor) {
-                      pageInfo { hasNextPage endCursor }
-                      nodes {
-                        isResolved
-                        isOutdated
-                        comments(first: 20) {
-                          nodes {
-                            author { login }
-                            body
-                            path
-                            line
-                            originalLine
-                          }
-                        }
+            // GraphQL: fetch all review threads + their comments + resolution state
+            const q = `query($owner:String!, $repo:String!, $num:Int!) {
+              repository(owner:$owner, name:$repo) {
+                pullRequest(number:$num) {
+                  reviewThreads(first: 100) {
+                    nodes {
+                      isResolved
+                      isOutdated
+                      comments(first: 50) {
+                        nodes { author { login } body }
                       }
                     }
                   }
                 }
-              }`;
-
-            const comments = [];
-            let cursor = null;
-            let skippedResolved = 0;
-            let skippedOutdated = 0;
-            do {
-              const res = await github.graphql(threadQuery, {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pr: prNumber,
-                cursor,
-              });
-              const threads = res.repository.pullRequest.reviewThreads;
-              for (const t of threads.nodes) {
-                if (t.isResolved) { skippedResolved += t.comments.nodes.length; continue; }
-                if (t.isOutdated) { skippedOutdated += t.comments.nodes.length; continue; }
-                for (const c of t.comments.nodes) {
-                  comments.push({
-                    user: { login: c.author?.login ?? "" },
-                    body: c.body ?? "",
-                    path: c.path ?? "?",
-                    line: c.line ?? c.originalLine ?? 0,
-                    original_line: c.originalLine ?? 0,
-                  });
-                }
               }
-              cursor = threads.pageInfo.hasNextPage ? threads.pageInfo.endCursor : null;
-            } while (cursor);
-
-            core.info(
-              `Fetched ${comments.length} live comments ` +
-              `(skipped ${skippedResolved} resolved, ${skippedOutdated} outdated)`,
-            );
-
-            function classify(author, body) {
-              if (/^cursor(\[bot\])?$/i.test(author)) {
-                if (/\*\*High Severity\*\*/i.test(body)) return "high";
-                if (/\*\*Medium Severity\*\*/i.test(body)) return "medium";
-                if (/\*\*Low Severity\*\*/i.test(body)) return "low";
-                return "unknown";
-              }
-              if (/^coderabbitai(\[bot\])?$/i.test(author)) {
-                if (/🔴 Critical|Critical_|🟣/u.test(body)) return "critical";
-                if (/🟠 Major/u.test(body)) return "major";
-                if (/🟡 Minor/u.test(body)) return "minor";
-                if (/🔵/u.test(body)) return "trivial";
-                return "unknown";
-              }
-              return "human";
-            }
-
-            const HIGH = [];
-            const MEDIUM = [];
-            const LOW = [];
-            const UNKNOWN = [];
-
-            for (const c of comments) {
-              const author = c.user?.login ?? "";
-              if (!/^(cursor|coderabbitai)/i.test(author)) continue;
-
-              const body = c.body ?? "";
-              const sev = classify(author, body);
-
-              // Extract title: first line that starts with `### ` or `**`,
-              // else the first non-empty line.
-              const lines = body.split("\n");
-              let title =
-                lines.find((l) => /^(### |\*\*)/.test(l.trim())) ??
-                lines.find((l) => l.trim().length > 0) ??
-                "";
-              title = title.replace(/^### /, "").replace(/\*\*/g, "").trim().slice(0, 120);
-
-              const entry = {
-                author,
-                path: c.path ?? "?",
-                line: c.line ?? c.original_line ?? 0,
-                title,
-                severity: sev,
-              };
-
-              if (["high", "critical", "major"].includes(sev)) HIGH.push(entry);
-              else if (sev === "medium") MEDIUM.push(entry);
-              else if (["low", "minor", "trivial"].includes(sev)) LOW.push(entry);
-              else UNKNOWN.push(entry);
-            }
-
-            const blocking = HIGH.length + MEDIUM.length;
-            const conclusion = blocking > 0 ? "failure" : "success";
-
-            const titleStr =
-              blocking > 0
-                ? `${blocking} blocking bot finding${blocking === 1 ? "" : "s"}`
-                : "no blocking bot findings";
-
-            const summaryStr =
-              blocking > 0
-                ? `**${blocking} blocking** (${HIGH.length} high/major + ${MEDIUM.length} medium). ` +
-                  `${LOW.length} low/minor deferrable, ${UNKNOWN.length} unclassified.`
-                : `${LOW.length} low/minor comment${LOW.length === 1 ? "" : "s"} (deferrable). ` +
-                  `${UNKNOWN.length} unclassified.`;
-
-            const sectionLines = [];
-            const fmt = (e) =>
-              `- [${e.author}] \`${e.path}:${e.line}\` — ${e.title}`;
-            if (HIGH.length) {
-              sectionLines.push(`### 🔴 BLOCKING — ${HIGH.length} High/Major/Critical`);
-              HIGH.forEach((e) => sectionLines.push(fmt(e)));
-              sectionLines.push("");
-            }
-            if (MEDIUM.length) {
-              sectionLines.push(`### 🟠 BLOCKING — ${MEDIUM.length} Medium`);
-              MEDIUM.forEach((e) => sectionLines.push(fmt(e)));
-              sectionLines.push("");
-            }
-            if (LOW.length) {
-              sectionLines.push(`### 🟡 Deferrable — ${LOW.length} Low/Minor/Trivial`);
-              LOW.forEach((e) => sectionLines.push(fmt(e)));
-              sectionLines.push("");
-            }
-            if (UNKNOWN.length) {
-              sectionLines.push(`### ℹ️ Unclassified — ${UNKNOWN.length}`);
-              UNKNOWN.forEach((e) => sectionLines.push(fmt(e)));
-              sectionLines.push("");
-            }
-            if (sectionLines.length === 0) {
-              sectionLines.push("_No bot review comments yet._");
-            }
-
-            await github.rest.checks.create({
+            }`;
+            const data = await github.graphql(q, {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              name: "bot-review-check",
-              head_sha: headSha,
-              status: "completed",
-              conclusion,
-              output: {
-                title: titleStr,
-                summary: summaryStr,
-                text: sectionLines.join("\n"),
-              },
+              num: pr.number,
             });
+            const threads = data.repository.pullRequest.reviewThreads.nodes;
 
-            core.info(
-              `Classified ${comments.length} comment(s): ` +
-                `${HIGH.length} high/major, ${MEDIUM.length} medium, ` +
-                `${LOW.length} low/minor, ${UNKNOWN.length} unknown. ` +
-                `Conclusion: ${conclusion}.`,
-            );
+            const blockers = [];
+            for (const t of threads) {
+              if (t.isResolved || t.isOutdated) continue;
+              for (const c of t.comments.nodes) {
+                const login = (c.author?.login || '').toLowerCase();
+                const body = (c.body || '');
+                const isCodeRabbit = login.includes('coderabbit');
+                const isCursor = login.includes('cursor');
+                if (!isCodeRabbit && !isCursor) continue;
+                // Severity tags
+                if (isCodeRabbit && /(🟠|🔴|⚠️\s*\*?\*?(?:major|critical))/i.test(body)) {
+                  blockers.push({ bot: 'CodeRabbit', body: body.slice(0, 200) });
+                  break;
+                }
+                if (isCursor && /(severity:\s*(?:high|medium))/i.test(body)) {
+                  blockers.push({ bot: 'Cursor', body: body.slice(0, 200) });
+                  break;
+                }
+              }
+            }
 
-            if (blocking > 0) {
-              core.setFailed(
-                `${blocking} blocking bot finding(s) on PR #${prNumber}. ` +
-                  `Address them before merging.`,
-              );
+            if (blockers.length) {
+              core.setFailed(`${blockers.length} unresolved bot finding(s):\n` +
+                blockers.map(b => `[${b.bot}] ${b.body}`).join('\n---\n'));
+            } else {
+              console.log('OK — no blocking bot threads');
             }
