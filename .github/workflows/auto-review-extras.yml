@@ -1,10 +1,7 @@
 name: auto-review-extras
 
-# AI critique pass + Lighthouse delta + visual regression on PRs.
-# Runs after the PR has a preview URL. Each job is independent and posts a
-# review comment with findings.
-#
-# Drop into .github/workflows/auto-review-extras.yml in each repo.
+# AI critique pass (GLM) + Lighthouse delta + visual-regression with R2-bridged Gemini analysis.
+# Runs on PR. Each job is independent and posts a review comment with findings.
 
 on:
   pull_request:
@@ -19,27 +16,29 @@ concurrency:
   group: auto-review-extras-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  R2_PUBLIC_BASE: https://pub-a384d181cfdc42a8914ac12cc6ce466b.r2.dev
+  R2_BUCKET: qa-screenshots
+  R2_ENDPOINT: https://dd94d96614fd27124c3abcecd08ca1f2.r2.cloudflarestorage.com
+  CHROME_DEVTOOLS_MCP: https://mcp.preview.softblaze.net:29041/mcp
+  GEMINI_MCP: https://mcp.preview.softblaze.net:29002/mcp
+  GLM_MCP: https://mcp.preview.softblaze.net:29006/mcp
+
 jobs:
-  # === AI critique pass ===
-  # Calls GLM-5.1 (Beast subscription, no per-call throttle) on the PR diff,
-  # asks for senior-engineer-grade feedback, posts a single review comment.
+  # === AI critique pass via GLM-5.1 (no throttle) ===
   ai-critique:
     name: ai-critique
     runs-on: ubuntu-latest
     if: github.event.pull_request.draft == false
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        with: { fetch-depth: 0 }
       - name: Compute PR diff
         id: diff
         run: |
           BASE=${{ github.event.pull_request.base.sha }}
           HEAD=${{ github.event.pull_request.head.sha }}
-          # Cap at 30k chars so the model has room
-          DIFF=$(git diff "$BASE".."$HEAD" -- '*.ts' '*.tsx' '*.js' '*.jsx' '*.py' '*.php' | head -c 30000)
-          # Save to a file for next step (multi-line in GHA env vars is messy)
-          echo "$DIFF" > /tmp/diff.txt
+          git diff "$BASE".."$HEAD" -- '*.ts' '*.tsx' '*.js' '*.jsx' '*.py' '*.php' | head -c 30000 > /tmp/diff.txt
           echo "size=$(wc -c < /tmp/diff.txt)" >> "$GITHUB_OUTPUT"
       - name: Critique via GLM-5.1
         id: critique
@@ -48,87 +47,57 @@ jobs:
           set +e
           DIFF=$(cat /tmp/diff.txt)
           PROMPT=$(jq -nR --arg d "$DIFF" --arg t "${{ github.event.pull_request.title }}" '
-            "You are a staff-level engineer reviewing a pull request. Provide concise, actionable feedback.\n\nPR title: " + $t + "\n\nDiff:\n```\n" + $d + "\n```\n\nReview rules:\n- Identify ARCHITECTURAL or DESIGN issues (not just style).\n- Flag SECURITY risks, RACE CONDITIONS, ERROR-HANDLING gaps.\n- Note any DUPLICATED logic, MAGIC NUMBERS, MISSING TYPES.\n- Skip trivial style/format nits — those are linter territory.\n- For each finding, format: SEVERITY: brief description (file:line if known)\n- Severity: blocker | major | minor\n- Cap response at 8 findings, sorted by severity.\n- If the diff looks clean, respond exactly: \"OK — no critique findings.\"\n\nReturn ONLY the findings. No preamble."
+            "You are a staff-level engineer reviewing a pull request. Provide concise, actionable feedback.\n\nPR title: " + $t + "\n\nDiff:\n```\n" + $d + "\n```\n\nReview rules:\n- Identify ARCHITECTURAL or DESIGN issues (not just style).\n- Flag SECURITY risks, RACE CONDITIONS, ERROR-HANDLING gaps.\n- Note any DUPLICATED logic, MAGIC NUMBERS, MISSING TYPES.\n- Skip trivial style/format nits.\n- For each finding: SEVERITY: brief description (file:line if known)\n- Severity: blocker | major | minor\n- Cap at 8 findings, sorted by severity.\n- If clean, respond exactly: \"OK — no critique findings.\"\n\nReturn ONLY the findings."
           ')
-          # Call GLM via Beast MCP (no auth needed, public route)
           REQ=$(jq -n --argjson p "$PROMPT" '{
-            jsonrpc: "2.0",
-            id: 1,
-            method: "tools/call",
+            jsonrpc: "2.0", id: 1, method: "tools/call",
             params: { name: "glm_generate", arguments: { prompt: $p, max_tokens: 2000, temperature: 0.2 } }
           }')
-          RESP=$(curl -sS --max-time 90 -X POST "https://mcp.preview.softblaze.net:29006/mcp" \
+          RESP=$(curl -sS --max-time 90 -X POST "$GLM_MCP" \
             -H "Accept: application/json, text/event-stream" \
-            -H "Content-Type: application/json" \
-            -d "$REQ" | grep -oE 'data:.*' | head -1 | sed 's/^data: //')
-          if [ -z "$RESP" ]; then
-            echo "ai-critique: no response from GLM (mcp may be down)"
-            exit 0
-          fi
+            -H "Content-Type: application/json" -d "$REQ" \
+            | grep -oE 'data:.*' | head -1 | sed 's/^data: //')
+          [ -z "$RESP" ] && exit 0
           REVIEW=$(echo "$RESP" | jq -r '.result.content[0].text // empty')
-          if [ -z "$REVIEW" ]; then
-            echo "ai-critique: empty review text"
-            exit 0
-          fi
+          [ -z "$REVIEW" ] && exit 0
           echo "$REVIEW" > /tmp/critique.md
           echo "review_size=$(wc -c < /tmp/critique.md)" >> "$GITHUB_OUTPUT"
-      - name: Post critique as PR comment
+      - name: Post critique
         if: steps.critique.outputs.review_size > 20
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const review = fs.readFileSync('/tmp/critique.md', 'utf-8').trim();
-            if (review.startsWith('OK — no critique findings') || review.startsWith('OK - no critique')) {
-              console.log('No findings — skipping comment');
-              return;
-            }
-            const body = '## 🤖 AI critique (GLM-5.1)\n\n' + review +
-              '\n\n_Automated review. Findings are advisory; not a merge gate._';
-            // Idempotent: replace previous AI critique comment from this bot if any
-            const prev = (await github.rest.issues.listComments({
-              owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number,
-            })).data.filter(c => c.user.login === 'github-actions[bot]' && c.body.includes('🤖 AI critique'));
-            for (const p of prev) {
-              await github.rest.issues.deleteComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: p.id });
-            }
-            await github.rest.issues.createComment({
-              owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body,
-            });
+            if (review.startsWith('OK — no critique') || review.startsWith('OK - no critique')) return;
+            const body = '## 🤖 AI critique (GLM-5.1)\n\n' + review + '\n\n_Advisory; not a merge gate._';
+            const prev = (await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number })).data.filter(c => c.user.login === 'github-actions[bot]' && c.body.includes('🤖 AI critique'));
+            for (const p of prev) await github.rest.issues.deleteComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: p.id });
+            await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
 
-  # === Lighthouse delta ===
-  # Runs Lighthouse on the PR's preview URL. Fails if perf or a11y score
-  # dropped >5 points vs. the baseline (main branch's last Lighthouse run).
-  # Baseline is stored as a workflow artifact named 'lighthouse-baseline-<repo>'.
+  # === Lighthouse delta on preview URL ===
   lighthouse-delta:
     name: lighthouse-delta
     runs-on: ubuntu-latest
     if: github.event.pull_request.draft == false
-    needs: []
     steps:
       - uses: actions/checkout@v4
       - name: Resolve preview URL
         id: preview
         run: |
-          # Convention: <branch-slug>.<repo-slug>.preview.softblaze.net
           BR=$(echo "${{ github.event.pull_request.head.ref }}" | sed 's|/|-|g' | tr '[:upper:]' '[:lower:]')
-          REPO_SLUG=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
-          URL="https://${BR}.${REPO_SLUG}.preview.softblaze.net"
-          echo "url=$URL" >> "$GITHUB_OUTPUT"
-      - name: Wait for preview to respond (max 90s)
+          REPO=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
+          echo "url=https://${BR}.${REPO}.preview.softblaze.net" >> "$GITHUB_OUTPUT"
+      - name: Wait for preview
         run: |
-          URL="${{ steps.preview.outputs.url }}"
           for i in $(seq 1 18); do
-            CODE=$(curl -sk --max-time 5 -o /dev/null -w "%{http_code}" "$URL" || echo 000)
-            if [ "$CODE" = "200" ] || [ "$CODE" = "301" ] || [ "$CODE" = "302" ] || [ "$CODE" = "307" ]; then
-              echo "preview ready ($CODE)"
-              exit 0
-            fi
+            CODE=$(curl -sk --max-time 5 -o /dev/null -w "%{http_code}" "${{ steps.preview.outputs.url }}" || echo 000)
+            [ "$CODE" = "200" ] || [ "$CODE" = "301" ] || [ "$CODE" = "302" ] || [ "$CODE" = "307" ] && exit 0
             sleep 5
           done
-          echo "preview not ready in 90s — skipping (probably a non-deploying repo)"
+          echo "preview not ready — skip"
           exit 0
-      - name: Run Lighthouse
+      - name: Lighthouse
         id: lh
         run: |
           npx -y -p @lhci/cli@0.13.x lhci collect \
@@ -137,7 +106,6 @@ jobs:
             --settings.preset=desktop \
             --settings.chromeFlags='--headless=new --no-sandbox' \
             --upload.target=temporary-public-storage 2>&1 | tee /tmp/lhci.log || true
-          # Extract perf score from results
           PERF=$(jq -r '.[0].categories.performance.score' .lighthouseci/lhr-*.json 2>/dev/null | head -1)
           A11Y=$(jq -r '.[0].categories.accessibility.score' .lighthouseci/lhr-*.json 2>/dev/null | head -1)
           SEO=$(jq -r '.[0].categories.seo.score' .lighthouseci/lhr-*.json 2>/dev/null | head -1)
@@ -156,18 +124,14 @@ jobs:
             const a11y = parseFloat('${{ steps.lh.outputs.a11y }}') * 100;
             const seo = parseFloat('${{ steps.lh.outputs.seo }}') * 100;
             const url = '${{ steps.preview.outputs.url }}';
-            const body = `## 🚦 Lighthouse on ${url}\n\n| | score |\n|---|---|\n| Performance | ${perf.toFixed(0)} |\n| Accessibility | ${a11y.toFixed(0)} |\n| SEO | ${seo.toFixed(0)} |\n\n_Baseline comparison not yet wired — currently posts absolute scores. Failing thresholds: perf < 80, a11y < 90 will be enforced after baseline lands._`;
+            const body = `## 🚦 Lighthouse on ${url}\n\n| | score |\n|---|---|\n| Performance | ${perf.toFixed(0)} |\n| Accessibility | ${a11y.toFixed(0)} |\n| SEO | ${seo.toFixed(0)} |\n\n_Thresholds: perf < 80 fails the job, a11y < 90 warns._`;
             const prev = (await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number })).data.filter(c => c.user.login === 'github-actions[bot]' && c.body.includes('🚦 Lighthouse'));
             for (const p of prev) await github.rest.issues.deleteComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: p.id });
             await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
-            // Fail the job if scores below threshold
             if (perf < 80) core.setFailed(`Performance ${perf.toFixed(0)} < 80`);
             if (a11y < 90) core.warning(`Accessibility ${a11y.toFixed(0)} < 90`);
 
-  # === Visual regression (scaffold) ===
-  # Uses chrome-devtools MCP to screenshot key pages, runs Gemini vision analysis
-  # on each. Doesn't yet diff against a baseline — instead asks "is anything visually
-  # broken?" If critical findings, fails the job. Wire baseline-image diff in v2.
+  # === Visual regression: chrome-devtools screenshot → R2 → Gemini analyze ===
   visual-regression:
     name: visual-regression
     runs-on: ubuntu-latest
@@ -178,70 +142,97 @@ jobs:
         id: preview
         run: |
           BR=$(echo "${{ github.event.pull_request.head.ref }}" | sed 's|/|-|g' | tr '[:upper:]' '[:lower:]')
-          REPO_SLUG=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
-          URL="https://${BR}.${REPO_SLUG}.preview.softblaze.net"
-          echo "url=$URL" >> "$GITHUB_OUTPUT"
-      - name: Run auto-qa via Beast pool
+          REPO=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
+          echo "url=https://${BR}.${REPO}.preview.softblaze.net" >> "$GITHUB_OUTPUT"
+      - name: Verify preview live
         run: |
-          # Calls /usr/local/bin/auto-qa on Beast over SSH? No — runner doesn't have SSH.
-          # Instead: hit chrome-devtools pool directly via public HTTPS.
-          # Take a screenshot, send to gemini_analyze_image. Smoke for now.
-          URL="${{ steps.preview.outputs.url }}"
-          # Probe preview is live
-          CODE=$(curl -sk --max-time 5 -o /dev/null -w "%{http_code}" "$URL" || echo 000)
+          CODE=$(curl -sk --max-time 5 -o /dev/null -w "%{http_code}" "${{ steps.preview.outputs.url }}" || echo 000)
           if [ "$CODE" != "200" ] && [ "$CODE" != "307" ] && [ "$CODE" != "302" ]; then
-            echo "preview not live ($CODE) — skipping visual regression"
+            echo "preview not live ($CODE) — skipping"
             exit 0
           fi
-          # Use chrome-devtools pool slot 1 (29041)
-          SESS=$(curl -sk --max-time 10 -X POST "https://mcp.preview.softblaze.net:29041/mcp" \
-            -H "Accept: application/json, text/event-stream" \
-            -H "Content-Type: application/json" \
-            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"vr","version":"1"}}}' \
-            -i | grep -i "Mcp-Session-Id:" | sed 's/.*: //I' | tr -d '\r\n')
-          if [ -z "$SESS" ]; then
-            echo "could not initialize chrome-devtools session — skipping"
-            exit 0
-          fi
-          # navigate
-          curl -sk --max-time 10 -X POST "https://mcp.preview.softblaze.net:29041/mcp" \
-            -H "Accept: application/json, text/event-stream" \
-            -H "Content-Type: application/json" \
+      - name: Capture screenshot via chrome-devtools pool
+        id: shot
+        run: |
+          set -e
+          # Initialize MCP session
+          INIT=$(curl -sk --max-time 10 -X POST "$CHROME_DEVTOOLS_MCP" \
+            -H "Accept: application/json, text/event-stream" -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"vr-ci","version":"1"}}}' \
+            -i)
+          SESS=$(echo "$INIT" | grep -i "Mcp-Session-Id:" | sed 's/.*: //I' | tr -d '\r\n')
+          [ -z "$SESS" ] && { echo "no session"; exit 0; }
+          # New page on preview
+          curl -sk --max-time 10 -X POST "$CHROME_DEVTOOLS_MCP" \
+            -H "Accept: application/json, text/event-stream" -H "Content-Type: application/json" \
             -H "Mcp-Session-Id: $SESS" \
-            -d "$(jq -n --arg u "$URL" '{jsonrpc:"2.0",id:2,method:"tools/call",params:{name:"new_page",arguments:{url:$u}}}')" >/dev/null
-          # screenshot
-          SHOT=$(curl -sk --max-time 30 -X POST "https://mcp.preview.softblaze.net:29041/mcp" \
-            -H "Accept: application/json, text/event-stream" \
-            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg u "${{ steps.preview.outputs.url }}" '{jsonrpc:"2.0",id:2,method:"tools/call",params:{name:"new_page",arguments:{url:$u}}}')" >/dev/null
+          # Screenshot
+          SHOT=$(curl -sk --max-time 30 -X POST "$CHROME_DEVTOOLS_MCP" \
+            -H "Accept: application/json, text/event-stream" -H "Content-Type: application/json" \
             -H "Mcp-Session-Id: $SESS" \
             -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"take_screenshot","arguments":{}}}' \
             | grep -oE 'data:.*' | head -1 | sed 's/^data: //' \
             | jq -r '.result.content[] | select(.type=="image") | .data')
-          if [ -z "$SHOT" ]; then
-            echo "no screenshot data — skipping"
-            exit 0
-          fi
+          [ -z "$SHOT" ] && { echo "no shot data"; exit 0; }
           echo "$SHOT" | base64 -d > /tmp/preview.png
-          ls -la /tmp/preview.png
-          # Gemini visual analysis (will fall through to GLM/OpenAI if Gemini throttled — but for CI just hit Gemini once)
-          REQ=$(jq -n --arg p "$(base64 -w0 /tmp/preview.png)" '{
-            jsonrpc:"2.0",id:4,method:"tools/call",
-            params:{name:"gemini_analyze_image",arguments:{
-              image_path:"/tmp/preview.png",
-              prompt:"Analyze this UI screenshot. List visual issues with severity (critical/major/minor). If the page looks fine, respond exactly: OK - no issues. Max 5 issues."
+          echo "size=$(stat -c%s /tmp/preview.png)" >> "$GITHUB_OUTPUT"
+      - name: Upload to R2
+        id: upload
+        if: steps.shot.outputs.size > 1000
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_REGION: auto
+        run: |
+          KEY="pr/${{ github.repository }}/${{ github.event.pull_request.number }}/run-${{ github.run_id }}.png"
+          KEY=$(echo "$KEY" | sed 's|/|_|g; s|^|pr_|')  # flatten
+          aws s3 cp /tmp/preview.png "s3://$R2_BUCKET/$KEY" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type image/png 2>&1 | tail -3
+          echo "url=$R2_PUBLIC_BASE/$KEY" >> "$GITHUB_OUTPUT"
+      - name: Vision analyze via Gemini
+        id: vision
+        if: steps.upload.outputs.url
+        run: |
+          REQ=$(jq -n --arg u "${{ steps.upload.outputs.url }}" '{
+            jsonrpc: "2.0", id: 1, method: "tools/call",
+            params: { name: "gemini_analyze_image", arguments: {
+              image_path: $u,
+              prompt: "Analyze this UI screenshot. List visual issues with severity (critical/major/minor). Be specific. If the page looks fine, respond exactly: OK — no issues. Max 5 findings."
             }}
           }')
-          # We cannot write to /tmp on Beast from here — image_path won't work. Skip vision call from CI.
-          # In v2: upload image to a Cloudflare R2 bucket and call gemini_analyze_image with the public URL.
-          echo "screenshot captured at /tmp/preview.png (size: $(stat -c%s /tmp/preview.png 2>/dev/null) bytes)"
-          echo "v2: upload to R2 + gemini analyze"
-      - name: Post visual-regression placeholder comment
-        if: always()
+          ANALYSIS=$(curl -sk --max-time 60 -X POST "$GEMINI_MCP" \
+            -H "Accept: application/json, text/event-stream" -H "Content-Type: application/json" \
+            -d "$REQ" | grep -oE 'data:.*' | head -1 | sed 's/^data: //' | jq -r '.result.content[0].text // empty')
+          if [ -z "$ANALYSIS" ]; then
+            echo "no analysis — gemini may be throttled, falling back to GLM vision"
+            REQ2=$(jq -n --arg u "${{ steps.upload.outputs.url }}" '{
+              jsonrpc:"2.0",id:1,method:"tools/call",
+              params:{name:"glm_vision",arguments:{
+                image_url:$u,
+                prompt:"Analyze this UI. List issues with severity. If fine: OK — no issues. Max 5."
+              }}
+            }')
+            ANALYSIS=$(curl -sk --max-time 60 -X POST "$GLM_MCP" \
+              -H "Accept: application/json, text/event-stream" -H "Content-Type: application/json" \
+              -d "$REQ2" | grep -oE 'data:.*' | head -1 | sed 's/^data: //' | jq -r '.result.content[0].text // empty')
+          fi
+          echo "$ANALYSIS" > /tmp/vision.md
+          echo "size=$(wc -c < /tmp/vision.md)" >> "$GITHUB_OUTPUT"
+      - name: Post visual-regression comment
+        if: steps.vision.outputs.size
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require('fs');
+            const analysis = fs.readFileSync('/tmp/vision.md', 'utf-8').trim();
             const url = '${{ steps.preview.outputs.url }}';
-            const body = `## 📸 Visual regression (preview check)\n\nPreview URL: ${url}\n\n_Screenshot captured via Beast chrome-devtools pool. Vision analysis pending image-upload bridge (v2). For now, this confirms preview is reachable._`;
+            const shot = '${{ steps.upload.outputs.url }}';
+            const isOk = /^OK[ —-]/i.test(analysis);
+            const body = `## 📸 Visual regression: ${url}\n\n![preview](${shot})\n\n${analysis}\n\n_Screenshot uploaded to R2 + analyzed via Gemini (fallback: GLM vision)._`;
             const prev = (await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number })).data.filter(c => c.user.login === 'github-actions[bot]' && c.body.includes('📸 Visual regression'));
             for (const p of prev) await github.rest.issues.deleteComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: p.id });
             await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
+            // Fail on critical findings
+            if (/critical/i.test(analysis) && !isOk) core.setFailed('Visual regression: critical findings detected');
