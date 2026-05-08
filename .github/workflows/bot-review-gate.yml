@@ -20,7 +20,7 @@ on:
 
 # Cancel previous runs on the same PR so we always evaluate the latest state
 concurrency:
-  group: bot-review-gate-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: bot-review-gate-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
