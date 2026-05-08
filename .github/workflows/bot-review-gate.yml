@@ -135,7 +135,7 @@ jobs:
                   blockers.push({ bot: 'CodeRabbit', body: body.slice(0, 200) });
                   break;
                 }
-                if (isCursor && /(severity:\s*(?:high|medium))/i.test(body)) {
+                if (isCursor && /(\*\*\s*(?:high|medium)\s+severity\s*\*\*|severity:\s*(?:high|medium))/i.test(body)) {
                   blockers.push({ bot: 'Cursor', body: body.slice(0, 200) });
                   break;
                 }
