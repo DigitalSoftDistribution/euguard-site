@@ -77,10 +77,12 @@ jobs:
               yarn) yarn typecheck ;;
               *)    npx tsc --noEmit ;;
             esac
-          elif [ -f tsconfig.json ] || find . -path ./node_modules -prune -o -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -print -quit | grep -q .; then
-            npx --yes typescript@5 tsc --noEmit
           else
-            echo "::warning::no tsconfig.json or TypeScript files; skipping typecheck"
+            if [ -f tsconfig.json ] || git ls-files '*.ts' '*.tsx' '*.mts' '*.cts' | grep -q .; then
+              npx --yes typescript@5 tsc --noEmit
+            else
+              echo "::warning::no tsconfig.json or TypeScript files; skipping typecheck"
+            fi
           fi
 
   # === Bot-review thread evaluation ===
@@ -101,14 +103,17 @@ jobs:
             })).data;
 
             // GraphQL: fetch all review threads + their comments + resolution state
-            const q = `query($owner:String!, $repo:String!, $num:Int!) {
+            const q = `query($owner:String!, $repo:String!, $num:Int!, $after:String) {
               repository(owner:$owner, name:$repo) {
                 pullRequest(number:$num) {
-                  reviewThreads(first: 100) {
+                  reviewThreads(first: 100, after: $after) {
+                    pageInfo { hasNextPage endCursor }
                     nodes {
+                      id
                       isResolved
                       isOutdated
-                      comments(first: 50) {
+                      comments(first: 100) {
+                        pageInfo { hasNextPage endCursor }
                         nodes { author { login } body }
                       }
                     }
@@ -116,12 +121,41 @@ jobs:
                 }
               }
             }`;
-            const data = await github.graphql(q, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              num: pr.number,
-            });
-            const threads = data.repository.pullRequest.reviewThreads.nodes;
+            const commentsQ = `query($id:ID!, $after:String) {
+              node(id:$id) {
+                ... on PullRequestReviewThread {
+                  comments(first: 100, after: $after) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes { author { login } body }
+                  }
+                }
+              }
+            }`;
+
+            const threads = [];
+            let after = null;
+            for (;;) {
+              const data = await github.graphql(q, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                num: pr.number,
+                after,
+              });
+              const page = data.repository.pullRequest.reviewThreads;
+              for (const thread of page.nodes) {
+                while (thread.comments.pageInfo.hasNextPage) {
+                  const more = await github.graphql(commentsQ, {
+                    id: thread.id,
+                    after: thread.comments.pageInfo.endCursor,
+                  });
+                  thread.comments.nodes.push(...more.node.comments.nodes);
+                  thread.comments.pageInfo = more.node.comments.pageInfo;
+                }
+                threads.push(thread);
+              }
+              if (!page.pageInfo.hasNextPage) break;
+              after = page.pageInfo.endCursor;
+            }
 
             const blockers = [];
             for (const t of threads) {

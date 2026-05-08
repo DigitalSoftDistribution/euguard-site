@@ -48,8 +48,8 @@ jobs:
         run: |
           set +e
           DIFF=$(cat /tmp/diff.txt)
-          PROMPT=$(jq -nR --arg d "$DIFF" --arg t "$PR_TITLE" '
-            "You are a staff-level engineer reviewing a pull request. Provide concise, actionable feedback.\n\nPR title: " + $t + "\n\nDiff:\n```\n" + $d + "\n```\n\nReview rules:\n- Identify ARCHITECTURAL or DESIGN issues (not just style).\n- Flag SECURITY risks, RACE CONDITIONS, ERROR-HANDLING gaps.\n- Note any DUPLICATED logic, MAGIC NUMBERS, MISSING TYPES.\n- Skip trivial style/format nits.\n- For each finding: SEVERITY: brief description (file:line if known)\n- Severity: blocker | major | minor\n- Cap at 8 findings, sorted by severity.\n- If clean, respond exactly: \"OK — no critique findings.\"\n\nReturn ONLY the findings."
+          PROMPT=$(jq -nR --arg d "$DIFF" --arg title "$PR_TITLE" '
+            "You are a staff-level engineer reviewing a pull request. Provide concise, actionable feedback.\n\nPR title: " + $title + "\n\nDiff:\n```\n" + $d + "\n```\n\nReview rules:\n- Identify ARCHITECTURAL or DESIGN issues (not just style).\n- Flag SECURITY risks, RACE CONDITIONS, ERROR-HANDLING gaps.\n- Note any DUPLICATED logic, MAGIC NUMBERS, MISSING TYPES.\n- Skip trivial style/format nits.\n- For each finding: SEVERITY: brief description (file:line if known)\n- Severity: blocker | major | minor\n- Cap at 8 findings, sorted by severity.\n- If clean, respond exactly: \"OK — no critique findings.\"\n\nReturn ONLY the findings."
           ')
           REQ=$(jq -n --argjson p "$PROMPT" '{
             jsonrpc: "2.0", id: 1, method: "tools/call",
@@ -86,13 +86,17 @@ jobs:
       - uses: actions/checkout@v4
       - name: Resolve preview URL
         id: preview
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          REPO_NAME: ${{ github.event.repository.name }}
         run: |
-          BR=$(echo "${{ github.event.pull_request.head.ref }}" | sed 's|/|-|g' | tr '[:upper:]' '[:lower:]')
-          REPO=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
+          BR=$(printf '%s' "$HEAD_REF" | sed 's|/|-|g' | tr '[:upper:]' '[:lower:]')
+          REPO=$(printf '%s' "$REPO_NAME" | tr '[:upper:]' '[:lower:]')
           echo "url=https://${BR}.${REPO}.preview.softblaze.net" >> "$GITHUB_OUTPUT"
       - name: Wait for preview
         id: preview_live
         run: |
+          echo "live=false" >> "$GITHUB_OUTPUT"
           for i in $(seq 1 18); do
             CODE=$(curl -sk --max-time 5 -o /dev/null -w "%{http_code}" "${{ steps.preview.outputs.url }}" || echo 000)
             if [ "$CODE" = "200" ] || [ "$CODE" = "301" ] || [ "$CODE" = "302" ] || [ "$CODE" = "307" ]; then
@@ -150,13 +154,17 @@ jobs:
       - uses: actions/checkout@v4
       - name: Resolve preview URL
         id: preview
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          REPO_NAME: ${{ github.event.repository.name }}
         run: |
-          BR=$(echo "${{ github.event.pull_request.head.ref }}" | sed 's|/|-|g' | tr '[:upper:]' '[:lower:]')
-          REPO=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
+          BR=$(printf '%s' "$HEAD_REF" | sed 's|/|-|g' | tr '[:upper:]' '[:lower:]')
+          REPO=$(printf '%s' "$REPO_NAME" | tr '[:upper:]' '[:lower:]')
           echo "url=https://${BR}.${REPO}.preview.softblaze.net" >> "$GITHUB_OUTPUT"
       - name: Verify preview live
         id: preview_live
         run: |
+          echo "live=false" >> "$GITHUB_OUTPUT"
           CODE=$(curl -sk --max-time 5 -o /dev/null -w "%{http_code}" "${{ steps.preview.outputs.url }}" || echo 000)
           if [ "$CODE" != "200" ] && [ "$CODE" != "307" ] && [ "$CODE" != "302" ]; then
             echo "preview not live ($CODE) — skipping"

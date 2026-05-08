@@ -9,7 +9,7 @@ if [ "${SKIP_TYPECHECK:-0}" = "1" ]; then
 fi
 
 # Find staged TS/TSX files
-staged=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(ts|tsx|mts|cts)$' || true)
+staged=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(ts|tsx|mts|cts)$' || true)
 if [ -z "$staged" ]; then
   exit 0
 fi
