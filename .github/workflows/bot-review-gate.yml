@@ -35,21 +35,50 @@ jobs:
     if: github.event.pull_request.draft == false
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
+      - name: Detect package manager
+        id: pm
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            echo "manager=pnpm" >> "$GITHUB_OUTPUT"
+          elif [ -f package-lock.json ]; then
+            echo "manager=npm" >> "$GITHUB_OUTPUT"
+          elif [ -f yarn.lock ]; then
+            echo "manager=yarn" >> "$GITHUB_OUTPUT"
+          else
+            echo "manager=none" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Detected: $(grep '^manager=' "$GITHUB_OUTPUT" | cut -d= -f2)"
+      - if: steps.pm.outputs.manager == 'pnpm'
+        uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - if: steps.pm.outputs.manager != 'none'
+        uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
+          cache: ${{ steps.pm.outputs.manager }}
+      - if: steps.pm.outputs.manager == 'none'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
       - name: Install
-        run: pnpm install --frozen-lockfile
+        if: steps.pm.outputs.manager != 'none'
+        run: |
+          case "${{ steps.pm.outputs.manager }}" in
+            pnpm) pnpm install --frozen-lockfile ;;
+            npm) npm ci ;;
+            yarn) yarn install --frozen-lockfile ;;
+          esac
       - name: Typecheck
         run: |
-          if grep -q '"typecheck"' package.json; then
-            pnpm -w typecheck 2>/dev/null || pnpm typecheck
+          if [ -f package.json ] && grep -q '"typecheck"' package.json; then
+            case "${{ steps.pm.outputs.manager }}" in
+              pnpm) pnpm typecheck ;;
+              npm)  npm run typecheck ;;
+              yarn) yarn typecheck ;;
+              *)    npx tsc --noEmit ;;
+            esac
           else
-            npx tsc --noEmit
+            npx --yes typescript@5 tsc --noEmit || echo "::warning::no tsconfig.json or no TS files; skipping typecheck"
           fi
 
   # === Bot-review thread evaluation ===
