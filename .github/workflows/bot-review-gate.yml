@@ -20,7 +20,7 @@ on:
 
 # Cancel previous runs on the same PR so we always evaluate the latest state
 concurrency:
-  group: bot-review-gate-${{ github.event.pull_request.number || github.ref }}
+  group: bot-review-gate-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -77,8 +77,10 @@ jobs:
               yarn) yarn typecheck ;;
               *)    npx tsc --noEmit ;;
             esac
+          elif [ -f tsconfig.json ] || find . -path ./node_modules -prune -o -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -print -quit | grep -q .; then
+            npx --yes typescript@5 tsc --noEmit
           else
-            npx --yes typescript@5 tsc --noEmit || echo "::warning::no tsconfig.json or no TS files; skipping typecheck"
+            echo "::warning::no tsconfig.json or TypeScript files; skipping typecheck"
           fi
 
   # === Bot-review thread evaluation ===

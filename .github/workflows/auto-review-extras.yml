@@ -43,10 +43,12 @@ jobs:
       - name: Critique via GLM-5.1
         id: critique
         if: steps.diff.outputs.size > 100
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set +e
           DIFF=$(cat /tmp/diff.txt)
-          PROMPT=$(jq -nR --arg d "$DIFF" --arg t "${{ github.event.pull_request.title }}" '
+          PROMPT=$(jq -nR --arg d "$DIFF" --arg t "$PR_TITLE" '
             "You are a staff-level engineer reviewing a pull request. Provide concise, actionable feedback.\n\nPR title: " + $t + "\n\nDiff:\n```\n" + $d + "\n```\n\nReview rules:\n- Identify ARCHITECTURAL or DESIGN issues (not just style).\n- Flag SECURITY risks, RACE CONDITIONS, ERROR-HANDLING gaps.\n- Note any DUPLICATED logic, MAGIC NUMBERS, MISSING TYPES.\n- Skip trivial style/format nits.\n- For each finding: SEVERITY: brief description (file:line if known)\n- Severity: blocker | major | minor\n- Cap at 8 findings, sorted by severity.\n- If clean, respond exactly: \"OK — no critique findings.\"\n\nReturn ONLY the findings."
           ')
           REQ=$(jq -n --argjson p "$PROMPT" '{
@@ -89,26 +91,34 @@ jobs:
           REPO=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
           echo "url=https://${BR}.${REPO}.preview.softblaze.net" >> "$GITHUB_OUTPUT"
       - name: Wait for preview
+        id: preview_live
         run: |
           for i in $(seq 1 18); do
             CODE=$(curl -sk --max-time 5 -o /dev/null -w "%{http_code}" "${{ steps.preview.outputs.url }}" || echo 000)
-            [ "$CODE" = "200" ] || [ "$CODE" = "301" ] || [ "$CODE" = "302" ] || [ "$CODE" = "307" ] && exit 0
+            if [ "$CODE" = "200" ] || [ "$CODE" = "301" ] || [ "$CODE" = "302" ] || [ "$CODE" = "307" ]; then
+              echo "live=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             sleep 5
           done
           echo "preview not ready — skip"
+          echo "live=false" >> "$GITHUB_OUTPUT"
           exit 0
       - name: Lighthouse
         id: lh
+        if: steps.preview_live.outputs.live == 'true'
         run: |
           npx -y -p @lhci/cli@0.13.x lhci collect \
             --url="${{ steps.preview.outputs.url }}" \
             --numberOfRuns=1 \
             --settings.preset=desktop \
             --settings.chromeFlags='--headless=new --no-sandbox' \
-            --upload.target=temporary-public-storage 2>&1 | tee /tmp/lhci.log || true
-          PERF=$(jq -r '.[0].categories.performance.score' .lighthouseci/lhr-*.json 2>/dev/null | head -1)
-          A11Y=$(jq -r '.[0].categories.accessibility.score' .lighthouseci/lhr-*.json 2>/dev/null | head -1)
-          SEO=$(jq -r '.[0].categories.seo.score' .lighthouseci/lhr-*.json 2>/dev/null | head -1)
+            --upload.target=temporary-public-storage 2>&1 | tee /tmp/lhci.log
+          LHR=$(find .lighthouseci -name 'lhr-*.json' -print -quit)
+          [ -n "$LHR" ] || { echo "::error::Lighthouse did not produce an LHR JSON file"; exit 1; }
+          PERF=$(jq -r '.categories.performance.score // empty' "$LHR")
+          A11Y=$(jq -r '.categories.accessibility.score // empty' "$LHR")
+          SEO=$(jq -r '.categories.seo.score // empty' "$LHR")
           [ -z "$PERF" ] && PERF=0
           [ -z "$A11Y" ] && A11Y=0
           [ -z "$SEO" ] && SEO=0
@@ -145,14 +155,18 @@ jobs:
           REPO=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
           echo "url=https://${BR}.${REPO}.preview.softblaze.net" >> "$GITHUB_OUTPUT"
       - name: Verify preview live
+        id: preview_live
         run: |
           CODE=$(curl -sk --max-time 5 -o /dev/null -w "%{http_code}" "${{ steps.preview.outputs.url }}" || echo 000)
           if [ "$CODE" != "200" ] && [ "$CODE" != "307" ] && [ "$CODE" != "302" ]; then
             echo "preview not live ($CODE) — skipping"
+            echo "live=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          echo "live=true" >> "$GITHUB_OUTPUT"
       - name: Capture screenshot via chrome-devtools pool
         id: shot
+        if: steps.preview_live.outputs.live == 'true'
         run: |
           set -e
           # Initialize MCP session

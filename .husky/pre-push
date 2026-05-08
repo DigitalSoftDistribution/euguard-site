@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+# === prepush-build-v1 (auto-installed via install-husky-prepush-build.sh) ===
+. "$(dirname -- "$0")/_/prepush-build.sh"
