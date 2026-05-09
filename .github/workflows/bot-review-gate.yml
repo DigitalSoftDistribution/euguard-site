@@ -20,6 +20,12 @@ on:
   pull_request_review:
     types: [submitted]
 
+
+# audit-workflow-concurrency.sh: cancel in-progress runs on rapid pushes
+concurrency:
+  group: bot-review-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     # For issue_comment events, only run on PR comments (not plain issues)
