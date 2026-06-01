@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+# === precommit-typecheck-v1 (auto-installed via install-husky-typecheck.sh) ===
+. "$(dirname -- "$0")/_/precommit-typecheck.sh"
